@@ -29,19 +29,44 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
+  /* [ArgumentParsing] Pointer: Remember where to continue splitting*/
+  char *save_ptr;
+  char *program_name;
+
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  fn_copy = palloc_get_page (0); //4KB 페이지를 하나 할당
+  if (fn_copy == NULL)           //할당에 실패한 경우(메모리가 부족한 경우
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (fn_copy, file_name, PGSIZE); //원래 명령어 문자열(file_name)을 fn_copy로 복사
 
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  /* [ArgumentParsing] Extract only program name */
+  program_name = strtok_r(fn_copy, " ", &save_ptr);
+
+  /* [ArgumentParsing] Create a thread to run the user program. */
+  tid = thread_create (program_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  /* [ArgumentParsing] Wait for child process to finish loading */
+  struct thread *child = get_thread_by_tid(tid); // 또는 thread_get_by_tid() 직접 구현
+  if (child == NULL)
+    return TID_ERROR;
+
+  /* [ProcessWait][Custom] Set parent of the child */
+  child->parent = thread_current();
+  /* [ProcessWait][Custom] Add child to parent's child list */
+  list_push_back(&thread_current()->child_list, &child->child_elem);
+
+  /* [ArgumentParsing] Wait until child loads program */
+  sema_down(&child->load_sema);
+  
+  /* [ArgumentParsing] Check if load was successful */
+  if (!child->load_success)
+    return TID_ERROR;
+    
   return tid;
 }
 
@@ -61,19 +86,84 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
+  /* [ArgumentParsing] Save load result in thread struct */
+  thread_current()->load_success = success;
+
+  /* [ArgumentParsing] Wake up the parent waiting on load result */
+  sema_up(&thread_current()->load_sema);
+
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
     thread_exit ();
 
-  /* Start the user process by simulating a return from an
-     interrupt, implemented by intr_exit (in
-     threads/intr-stubs.S).  Because intr_exit takes all of its
-     arguments on the stack in the form of a `struct intr_frame',
-     we just point the stack pointer (%esp) to our stack frame
-     and jump to it. */
+  /* [ArgumentParsing] Parse command line into tokens */
+  char *argv[128];      // 최대 인자 128개까지 지원
+  int argc = 0;
+  char *token;
+  char *save_ptr;
+
+  /* [ArgumentParsing] First token already used for load(), parse again */
+  for (token = strtok_r(file_name, " ", &save_ptr); token != NULL;
+      token = strtok_r(NULL, " ", &save_ptr))
+  {
+    argv[argc++] = token;
+  }
+
+  /* [ArgumentParsing] Push arguments onto the user stack */
+  argument_stack(argv, argc, &if_.esp);
+
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
+}
+/* [ArgumentParsing][Custom] Push arguments onto the user stack */
+static void
+argument_stack(char **argv, int argc, void **esp) {
+  void *sp = *esp; //Extended Stack Pointer"의 약자로, 스택에서 가장 최근에 저장된 데이터의 위치, 즉 스택의 가장 위에 있는 항목을 가리키는 레지스터
+  char *arg_ptrs[128]; // 인자의 주소를 저장할 배열 (최대 128개 인자 가정) argv[0], argv[1], …
+
+  /* [ArgumentParsing][Custom] Push each argument string in reverse order */
+  for (int i = argc - 1; i >= 0; i--) {
+    size_t len = strlen(argv[i]) + 1;
+    sp -= len;                            // 스택 포인터 감소
+    memcpy(sp, argv[i], len);            // 문자열 복사
+    arg_ptrs[i] = sp;                    // 각 문자열 주소 저장
+  }
+
+  /* [ArgumentParsing] Word-align the stack (4-byte aligned) */
+  uintptr_t align = (uintptr_t)sp % 4;
+  if (align) {
+    sp -= align;
+    memset(sp, 0, align);
+  }
+
+  /* [ArgumentParsing]Push null sentinel */
+  sp -= sizeof(char *);
+  *(char **)sp = NULL;
+
+  /* [ArgumentParsing]Push addresses of arguments (argv[i]) */
+  for (int i = argc - 1; i >= 0; i--) {
+    sp -= sizeof(char *);
+    *(char **)sp = arg_ptrs[i];
+  }
+
+  /* [ArgumentParsing] Save argv pointer location */
+  char **argv_addr = (char **)sp;
+
+  /* [ArgumentParsing] Push argv */
+  sp -= sizeof(char **);
+  *(char ***)sp = argv_addr;
+
+  /* [ArgumentParsing] Push argc */
+  sp -= sizeof(int);
+  *(int *)sp = argc;
+
+  /* [ArgumentParsing] Push fake return address */
+  sp -= sizeof(void *);
+  *(void **)sp = NULL;
+
+  /* [ArgumentParsing] Update esp */
+  *esp = sp;
 }
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -85,9 +175,43 @@ start_process (void *file_name_)
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
+
+/* [ProcessWait] Wait for the given child to exit and return its status */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
+  struct thread *parent = thread_current();
+  struct list_elem *e;
+
+  /* [ProcessWait] Search for the child in parent's child list */
+  for (e = list_begin(&parent->child_list);
+       e != list_end(&parent->child_list);
+       e = list_next(e)) {
+
+    struct thread *child = list_entry(e, struct thread, child_elem);
+
+    /* [ProcessWait] Check if tid matches */
+    if (child->tid == child_tid) {
+
+      /* [ProcessWait] If already waited, return -1 */
+      if (child->has_waited)
+        return -1;
+
+      child->has_waited = true;
+
+      /* [ProcessWait] Wait until child exits */
+      sema_down(&child->wait_sema);
+
+      /* [ProcessWait] Get exit status */
+      int status = child->exit_status;
+
+      /* [ProcessWait] Remove child from list (optional cleanup) */
+      list_remove(&child->child_elem);
+
+      return status;
+    }
+  }
+  /* If not found in child list, invalid wait */
   return -1;
 }
 
