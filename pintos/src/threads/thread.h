@@ -6,6 +6,8 @@
 #include <stdint.h>
 /* [MLFQ] Include fixed-point number support for MLFQ calculations */
 #include "threads/fixed_point.h"
+/*[ArgumentParsing] To use semaphore*/
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status

@@ -51,7 +51,7 @@ process_execute (const char *file_name)
     palloc_free_page (fn_copy); 
 
   /* [ArgumentParsing] Wait for child process to finish loading */
-  struct thread *child = get_thread_by_tid(tid); // 또는 thread_get_by_tid() 직접 구현
+  struct thread *child = get_thread_by_tid(tid);
   if (child == NULL)
     return TID_ERROR;
 
@@ -112,6 +112,7 @@ start_process (void *file_name_)
 
   /* [ArgumentParsing] Push arguments onto the user stack */
   argument_stack(argv, argc, &if_.esp);
+  hex_dump(if_.esp , if_.esp , PHYS_BASE – if_.esp , true);
 
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
@@ -178,41 +179,46 @@ argument_stack(char **argv, int argc, void **esp) {
 
 /* [ProcessWait] Wait for the given child to exit and return its status */
 int
-process_wait (tid_t child_tid) 
+process_wait (tid_t child_tid UNUSED) 
 {
-  struct thread *parent = thread_current();
-  struct list_elem *e;
-
-  /* [ProcessWait] Search for the child in parent's child list */
-  for (e = list_begin(&parent->child_list);
-       e != list_end(&parent->child_list);
-       e = list_next(e)) {
-
-    struct thread *child = list_entry(e, struct thread, child_elem);
-
-    /* [ProcessWait] Check if tid matches */
-    if (child->tid == child_tid) {
-
-      /* [ProcessWait] If already waited, return -1 */
-      if (child->has_waited)
-        return -1;
-
-      child->has_waited = true;
-
-      /* [ProcessWait] Wait until child exits */
-      sema_down(&child->wait_sema);
-
-      /* [ProcessWait] Get exit status */
-      int status = child->exit_status;
-
-      /* [ProcessWait] Remove child from list (optional cleanup) */
-      list_remove(&child->child_elem);
-
-      return status;
-    }
+  volatile int i;
+  for (i = 0; i < 100000000; i++) {
+    // delay
   }
-  /* If not found in child list, invalid wait */
   return -1;
+  // struct thread *parent = thread_current();
+  // struct list_elem *e;
+
+  // /* [ProcessWait] Search for the child in parent's child list */
+  // for (e = list_begin(&parent->child_list);
+  //      e != list_end(&parent->child_list);
+  //      e = list_next(e)) {
+
+  //   struct thread *child = list_entry(e, struct thread, child_elem);
+
+  //   /* [ProcessWait] Check if tid matches */
+  //   if (child->tid == child_tid) {
+
+  //     /* [ProcessWait] If already waited, return -1 */
+  //     if (child->has_waited)
+  //       return -1;
+
+  //     child->has_waited = true;
+
+  //     /* [ProcessWait] Wait until child exits */
+  //     sema_down(&child->wait_sema);
+
+  //     /* [ProcessWait] Get exit status */
+  //     int status = child->exit_status;
+
+  //     /* [ProcessWait] Remove child from list (optional cleanup) */
+  //     list_remove(&child->child_elem);
+
+  //     return status;
+  //   }
+  // }
+  // /* If not found in child list, invalid wait */
+  // return -1;
 }
 
 /* Free the current process's resources. */
@@ -220,7 +226,12 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  uint32_t *pd;
+  uint32_t *pd; // page directory
+  
+  /* [ProcessWait] If parent is waiting, wake it up */
+  if (cur->parent != NULL) {
+    sema_up(&cur->wait_sema);
+  }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
