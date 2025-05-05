@@ -108,9 +108,29 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    /* [ArgumentParsing][Custom] Used to sync between parent and child */
+    struct semaphore load_sema;
+    /* [ArgumentParsing][Custom] True if load() succeeded in child process */
+    bool load_success;
+
+    /* [ProcessWait][Custom] Pointer to parent thread */
+    struct thread *parent;
+    /* [ProcessWait][Custom] List of this thread's child processes */
+    struct list child_list;
+    /* [ProcessWait][Custom] List element for parent's child list */
+    struct list_elem child_elem;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    /* [ProcessWait][Custom] Exit status returned when child exits */
+    int exit_status;
+    /* [ProcessWait][Custom] Used by parent to wait for child to finish */
+    struct semaphore wait_sema;
+    /* [ProcessWait][Custom] True if parent already waited on this child */
+    bool has_waited;
+    
+
 #endif
 
     /* Owned by thread.c. */
@@ -150,6 +170,9 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+
+/* [ProcessWait]*/
+struct thread *get_thread_by_tid(tid_t tid);
 
 /* [PriorityScheduling][Custom] Compare function for thread priorities */
 bool thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
