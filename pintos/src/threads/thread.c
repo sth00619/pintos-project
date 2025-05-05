@@ -475,6 +475,17 @@ thread_get_priority (void)
   return thread_current ()->priority;
 }
 
+/* [ProcessWait][Custom] Find thread by tid in all_list */
+struct thread *get_thread_by_tid(tid_t tid) {
+  struct list_elem *e;
+  for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+    struct thread *t = list_entry(e, struct thread, allelem);
+    if (t->tid == tid)
+      return t;
+  }
+  return NULL;
+}
+
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice UNUSED) 
@@ -662,6 +673,9 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+  /* [ArgumentParsing] Initialize load semaphore */
+  sema_init(&t->load_sema, 0);
+
   /* [Donation] Initialize donation-related fields */
   t->base_priority = priority;
   list_init(&t->locks_holding);
@@ -676,6 +690,10 @@ init_thread (struct thread *t, const char *name, int priority)
   list_insert_ordered(&all_list, &t->allelem, (list_less_func *)&thread_cmp_priority, NULL);
 
   intr_set_level (old_level);
+
+  /* [ProcessWait][Custom] Initialize list of child processes */
+  list_init(&t->child_list);
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
