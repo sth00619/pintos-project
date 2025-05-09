@@ -4,10 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-/* [MLFQ] Include fixed-point number support for MLFQ calculations */
-#include "threads/fixed_point.h"
-/*[ArgumentParsing] To use semaphore*/
-#include "threads/synch.h"
+#include <kernel/list.h>
+#include <threads/synch.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -94,58 +92,46 @@ struct thread
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
 
-    /* [AlarmClock][Custom] Number of ticks the thread needs to remain blocked */
-    int64_t ticks_blocked;              
-    /* [Donation][Custom] Original priority before donation */
-    int base_priority;                  
-    /* [Donation][Custom] List of locks this thread currently holds */
-    struct list locks_holding;          
-    /* [Donation][Custom] Lock this thread is currently waiting for */
-    struct lock *lock_waiting4;         
-    /* [MLFQ][Custom] Nice value for MLFQ scheduling */
-    int nice;                           
-    /* [MLFQ][Custom] Recent CPU usage for MLFQ scheduling */
-    fixed_t recent_cpu;                 
-
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-    /* [ArgumentParsing][Custom] Used to sync between parent and child */
-    struct semaphore load_sema;
-    /* [ArgumentParsing][Custom] True if load() succeeded in child process */
-    bool load_success;
+    int64_t waketick;
 
-    /* [ProcessWait][Custom] Pointer to parent thread */
-    struct thread *parent;
-    /* [ProcessWait][Custom] List of this thread's child processes */
-    struct list child_list;
-    /* [ProcessWait][Custom] List element for parent's child list */
-    struct list_elem child_elem;
+    bool success;
+    
+    int exit_error;
+
+    struct list child_proc;
+    struct thread* parent;
+
+    struct file *self;
+
+    struct list files;
+    int fd_count;
+
+    struct semaphore child_lock;
+    int waitingon;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    /* [ProcessWait][Custom] Exit status returned when child exits */
-    int exit_status;
-    /* [ProcessWait][Custom] Used by parent to wait for child to finish */
-    struct semaphore wait_sema;
-    /* [ProcessWait][Custom] True if parent already waited on this child */
-    bool has_waited;
-    
-
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
 
+  struct child {
+      int tid;
+      struct list_elem elem;
+      int exit_error;
+      bool used;
+    };
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-
-/* [AlarmClock][Custom] Function to check and wake up sleeping threads */
-void checkInvoke(struct thread *t, void *aux UNUSED);
 
 void thread_init (void);
 void thread_start (void);
@@ -173,32 +159,11 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 void thread_set_priority (int);
 
-/* [ProcessWait]*/
-struct thread *get_thread_by_tid(tid_t tid);
-
-/* [PriorityScheduling][Custom] Compare function for thread priorities */
-bool thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
-/* [Donation][Custom] Donate priority from current thread to a blocked thread */
-void thread_donate_priority(struct thread *t);
-/* [Donation][Custom] Add lock to thread's holding list and update priority */
-void thread_hold_lock(struct lock *lock);
-/* [Donation][Custom] Remove lock from thread's holding list and update priority */
-void thread_remove_lock(struct lock *lock);
-/* [Donation][Custom] Compare function for lock priorities */
-bool lock_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
-/* [Donation][Custom] Update thread's priority based on base and donated priorities */
-void thread_update_priority(struct thread *t);
-
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
-/* [MLFQ][Custom] Increment recent_cpu value for running thread */
-void mlfqs_inc_recent_cpu();
-/* [MLFQ][Custom] Update load average and recent_cpu for all threads */
-void mlfqs_update_load_avg_and_recent_cpu();
-/* [MLFQ][Custom] Recalculate thread priority based on MLFQ formula */
-void mlfqs_update_priority(struct thread *t);
+bool cmp_waketick(struct list_elem *first, struct list_elem *second, void *aux);
 
 #endif /* threads/thread.h */

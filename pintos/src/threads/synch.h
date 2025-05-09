@@ -22,10 +22,6 @@ struct lock
   {
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
-    /* [Donation][Custom] Element to store in thread's lock list for priority donation */
-    struct list_elem elem;      
-    /* [Donation][Custom] Tracks highest priority of threads waiting for this lock */
-    int max_priority;           
   };
 
 void lock_init (struct lock *);
@@ -44,9 +40,6 @@ void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
-
-/* [PriorityScheduling][Custom] Compares condition variable waiters by their thread priorities */
-bool cond_cmp_priority(const struct list_elem *, const struct list_elem *, void * UNUSED);
 
 /* Optimization barrier.
 
