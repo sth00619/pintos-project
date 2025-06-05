@@ -14,6 +14,10 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+#ifdef VM
+#include "vm/page.h"
+#include <hash.h>
+#endif
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -304,14 +308,28 @@ thread_exit (void)
   process_exit ();
 #endif
 
+#ifdef VM
+  /* Destroy supplemental page table */
+  struct hash_iterator i;
+  hash_first (&i, &thread_current ()->pages);
+  while (hash_next (&i))
+    {
+      struct page *page = hash_entry (hash_cur (&i), struct page, hash_elem);
+      if (page->frame != NULL)
+        frame_free (page->frame);
+      free (page);
+    }
+  hash_destroy (&thread_current ()->pages, NULL);
+#endif
+
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
 
-    while(!list_empty(&thread_current()->child_proc)){
-      struct proc_file *f = list_entry (list_pop_front(&thread_current()->child_proc), struct child, elem);
-      free(f);
-    }
+  while(!list_empty(&thread_current()->child_proc)){
+    struct proc_file *f = list_entry (list_pop_front(&thread_current()->child_proc), struct child, elem);
+    free(f);
+  }
 
   intr_disable ();
   list_remove (&thread_current()->allelem);
@@ -399,7 +417,7 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
-
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -448,7 +466,7 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -493,6 +511,13 @@ init_thread (struct thread *t, const char *name, int priority)
   sema_init(&t->child_lock,0);
   t->waitingon=0;
   t->self=NULL;
+  
+#ifdef VM
+  /* Initialize supplemental page table */
+  hash_init (&t->pages, page_hash, page_less, NULL);
+  t->esp = NULL;
+#endif
+  
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -615,7 +640,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <kernel/list.h>
 #include <threads/synch.h>
+#include <hash.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -111,6 +112,12 @@ struct thread
 
     struct semaphore child_lock;
     int waitingon;
+
+#ifdef VM
+    /* Virtual memory */
+    struct hash pages;                  /* Supplemental page table */
+    void *esp;                         /* Saved stack pointer for page faults */
+#endif
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */

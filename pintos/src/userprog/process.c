@@ -197,7 +197,7 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -274,7 +274,8 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
-  //printf("In load\n");
+  printf("load: starting for '%s'\n", file_name);
+  
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -286,7 +287,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL)
+  {
+    printf("load: pagedir_create failed\n");
     goto done;
+  }
   process_activate ();
   
   /* Open executable file. */
@@ -381,12 +385,17 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
+  printf("load: setting up stack\n");
   if (!setup_stack (esp,file_name))
+  {
+    printf("load: setup_stack failed\n");
     goto done;
+  }
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
   success = true;
+  printf("load: success, entry point=%p\n", *eip);
 
   file_deny_write(file);
 
@@ -397,7 +406,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
  release_filesys_lock();
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
@@ -470,6 +479,13 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
+#ifdef VM
+  /* Use demand paging */
+  printf("load_segment: VM mode - mapping %d bytes at %p\n", read_bytes + zero_bytes, upage);
+  return page_map_file (upage, file, ofs, read_bytes, zero_bytes, writable);
+#else
+  printf("load_segment: Non-VM mode\n");
+  /* Original implementation */
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -505,6 +521,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       upage += PGSIZE;
     }
   return true;
+#endif
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
@@ -514,7 +531,37 @@ setup_stack (void **esp, char * file_name)
 {
   uint8_t *kpage;
   bool success = false;
+  printf("setup_stack: starting\n");
 
+#ifdef VM
+  /* Create a zero page for stack */
+  printf("setup_stack: VM mode - creating zero page\n");
+  if (!page_map_zero (((uint8_t *) PHYS_BASE) - PGSIZE, true))
+  {
+    printf("setup_stack: Failed to map stack page\n");
+    return false;
+  }
+  
+  /* Load the page immediately for stack setup */
+  struct page *page = page_lookup (((uint8_t *) PHYS_BASE) - PGSIZE);
+  if (page == NULL)
+  {
+    printf("setup_stack: page_lookup failed\n");
+    return false;
+  }
+  
+  if (!page_load (page))
+  {
+    printf("setup_stack: page_load failed\n");
+    return false;
+  }
+  
+  *esp = PHYS_BASE;
+  success = true;
+  printf("setup_stack: VM mode complete, esp=%p\n", *esp);
+#else
+  printf("setup_stack: Non-VM mode\n");
+  /* Original implementation */
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
@@ -524,7 +571,17 @@ setup_stack (void **esp, char * file_name)
       else
         palloc_free_page (kpage);
     }
+#endif
 
+  if (!success)
+  {
+    printf("setup_stack: failed to set up stack\n");
+    return false;
+  }
+
+  /* Stack argument setup code */
+  printf("setup_stack: setting up arguments\n");
+  
   char *token, *save_ptr;
   int argc = 0,i;
 
@@ -579,6 +636,7 @@ setup_stack (void **esp, char * file_name)
   free(copy);
   free(argv);
 
+  printf("setup_stack: complete with %d arguments\n", argc);
   return success;
 }
 

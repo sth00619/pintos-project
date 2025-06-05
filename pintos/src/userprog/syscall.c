@@ -8,6 +8,9 @@
 #include "threads/vaddr.h"
 #include "list.h"
 #include "process.h"
+#ifdef VM
+#include "vm/page.h"
+#endif
 
 static void syscall_handler (struct intr_frame *);
 void* check_addr(const void*);
@@ -30,6 +33,10 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f UNUSED) 
 {
+#ifdef VM
+  /* Save esp for page fault handling */
+  thread_current ()->esp = f->esp;
+#endif
   int * p = f->esp;
 
 	check_addr(p);
